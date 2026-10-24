@@ -59,9 +59,11 @@ function TermsAndConditions() {
                 </p>
 
                 <h2 className="text-2xl md:text-xl font-bold mb-4">5. Disclaimer of Warranties</h2>
-                <p className="mb-4 text-sm">
-                    OmeLive is provided on an "as is" and "as available" basis. We do not guarantee that the service will be uninterrupted, secure, or error-free. Use of the service is at your own risk.
-                </p>
+                
+<p className="mb-4 text-sm">
+  OmeLive is provided on an &quot;as is&quot; and &quot;as available&quot; basis. We do not guarantee that the service will be uninterrupted, secure, or error-free. Use of the service is at your own risk.
+</p>
+
 
                 <h2 className="text-2xl md:text-xl font-bold mb-4">6. Limitation of Liability</h2>
                 <p className="mb-4 text-sm">
