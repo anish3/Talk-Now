@@ -97,30 +97,48 @@ const Page = () => {
     };
 
     const handleTrack = async (event: RTCTrackEvent) => {
-      console.log("REMOTE TRACK RECEIVED", {
-        kind: event.track.kind,
-        readyState: event.track.readyState,
-        muted: event.track.muted,
-        streams: event.streams.length,
-      });
+  const track = event.track;
 
-      // Use the incoming stream when the browser provides one.
-      if (event.streams[0]) {
-        const incomingStream = event.streams[0];
+  console.log("REMOTE TRACK RECEIVED", {
+    kind: track.kind,
+    readyState: track.readyState,
+    muted: track.muted,
+    streams: event.streams.length,
+  });
 
-        for (const track of incomingStream.getTracks()) {
-          if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
-            remoteStream.addTrack(track);
-          }
-        }
-      } else {
-        if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
-          remoteStream.addTrack(event.track);
-        }
+  // Prefer the stream supplied by WebRTC.
+  if (event.streams.length > 0) {
+    const incomingStream = event.streams[0];
+    const video = remoteVideoRef.current;
+
+    if (video && !disposed) {
+      if (video.srcObject !== incomingStream) {
+        video.srcObject = incomingStream;
       }
 
-      await attachRemoteStream();
-    };
+      try {
+        await video.play();
+        console.log("REMOTE VIDEO PLAYING");
+      } catch (error) {
+        console.warn("Remote playback failed:", error);
+      }
+    }
+  } else {
+    // Some peers provide a track without an associated stream.
+    if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+      remoteStream.addTrack(track);
+    }
+
+    await attachRemoteStream();
+  }
+
+  track.onunmute = () => {
+    console.log("REMOTE TRACK UNMUTED", {
+      kind: track.kind,
+      readyState: track.readyState,
+    });
+  };
+};
 
     const handleIceCandidate = (event: RTCPeerConnectionIceEvent) => {
       if (!event.candidate) return;
@@ -246,10 +264,11 @@ const Page = () => {
     };
 
     const handleConnectionState = () => {
-      console.log("PEER CONNECTION STATE:", peerConnection.connectionState);
-      console.log("ICE CONNECTION STATE:", peerConnection.iceConnectionState);
-      console.log("ICE GATHERING STATE:", peerConnection.iceGatheringState);
-    };
+  console.log("PEER CONNECTION STATE:", peerConnection.connectionState);
+  console.log("ICE CONNECTION STATE:", peerConnection.iceConnectionState);
+  console.log("ICE GATHERING STATE:", peerConnection.iceGatheringState);
+  console.log("SIGNALING STATE:", peerConnection.signalingState);
+};
 
     const handleTrackMute = (event: Event) => {
       const track = event.target as MediaStreamTrack;
