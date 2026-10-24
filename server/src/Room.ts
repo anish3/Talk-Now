@@ -39,6 +39,28 @@ export class RoomManager {
     private rooms: Map<string, Room>;
     private io:Server
 
+    private recentPartners: Map<string, string[]> = new Map();
+
+private hasRecentlyMatched(user1: string, user2: string): boolean {
+  return (
+    (this.recentPartners.get(user1) ?? []).includes(user2) ||
+    (this.recentPartners.get(user2) ?? []).includes(user1)
+  );
+}
+
+private rememberMatch(user1: string, user2: string): void {
+  const remember = (user: string, partner: string) => {
+    const previous = this.recentPartners.get(user) ?? [];
+    this.recentPartners.set(
+      user,
+      [partner, ...previous.filter((id) => id !== partner)].slice(0, 5)
+    );
+  };
+
+  remember(user1, user2);
+  remember(user2, user1);
+}
+
     constructor(io:Server) {
         this.rooms = new Map<string, Room>();
         this.io = io;
@@ -51,31 +73,81 @@ export class RoomManager {
     }
 
 
-    async addUser(socketId:string){
-        await new Promise(resolve => setTimeout(resolve, 3000));
+    
+async addUser(socketId: string) {
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        NUM_OF_PLAYERS++;
-        console.log("Number of players ---> "  , socketId ," => " , NUM_OF_PLAYERS)
-        queue.enqueue({id:socketId})
-        console.log("PLAYERS IN QUEUE -> " , queue.size())
-        if(queue.size()>1){
-            console.log(":: Pair found ::")
-            const user1 = queue.dequeue()
-            const user2 = queue.dequeue()
-            if(user1 && user2) {
-                console.log("requesting offer")
-                const room = this.createRoom(user1 , user2)
-                this.io.to(user1.id).to(user2.id).emit('joined' , {room})
-                this.io.to(user1.id).emit("send-offer")
-                console.log("sent offer request to :: " , user1.id)
-            }
-        }
-        else {
-            console.log("NO PAIR FOUND")
-        }
+  // Prevent duplicate queue entries.
+  if (queue.find(socketId)) {
+    return;
+  }
 
-        this.io.emit("user-count" , NUM_OF_PLAYERS)
-    }
+  NUM_OF_PLAYERS++;
+
+  console.log("Number of players --->", socketId, "=>", NUM_OF_PLAYERS);
+
+  queue.enqueue({ id: socketId });
+  console.log("PLAYERS IN QUEUE ->", queue.size());
+
+  this.io.emit("user-count", NUM_OF_PLAYERS);
+
+  if (queue.size() < 2) {
+    console.log("NO PAIR FOUND");
+    return;
+  }
+
+  // Collect waiting users.
+  const waitingUsers: User[] = [];
+
+  while (queue.size() > 0) {
+    const user = queue.dequeue();
+    if (user) waitingUsers.push(user);
+  }
+
+  if (waitingUsers.length < 2) {
+    waitingUsers.forEach((user) => queue.enqueue(user));
+    return;
+  }
+
+  // Keep the longest-waiting user first.
+  const user1 = waitingUsers[0];
+  const candidates = waitingUsers.slice(1);
+
+  // Prefer a partner not matched recently.
+  const freshCandidates = candidates.filter(
+    (candidate) =>
+      !this.hasRecentlyMatched(user1.id, candidate.id)
+  );
+
+  // Allow a repeat if no alternative is available.
+  const availableCandidates =
+    freshCandidates.length > 0 ? freshCandidates : candidates;
+
+  const randomIndex = Math.floor(
+    Math.random() * availableCandidates.length
+  );
+
+  const user2 = availableCandidates[randomIndex];
+
+  // Put unmatched users back in the queue.
+  const selectedIds = new Set([user1.id, user2.id]);
+
+  waitingUsers
+    .filter((user) => !selectedIds.has(user.id))
+    .forEach((user) => queue.enqueue(user));
+
+  this.rememberMatch(user1.id, user2.id);
+
+  console.log(":: Random pair found ::", user1.id, user2.id);
+
+  const room = this.createRoom(user1, user2);
+
+  this.io.to(user1.id).to(user2.id).emit("joined", { room });
+  this.io.to(user1.id).emit("send-offer");
+
+  console.log("sent offer request to ::", user1.id);
+}
+
 
     handleOffer(socketId:string , roomId:string, offer:any){
         console.log("OFFER SENT BY :: " , socketId , " FOR ROOM ::  " , roomId)
