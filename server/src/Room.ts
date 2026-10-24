@@ -1,5 +1,4 @@
 
-import { Socket } from "socket.io";
 import { v4 as uuidv4 } from 'uuid';
 import Queue from "./Queue";
 import { Server } from 'socket.io';
@@ -52,38 +51,35 @@ export class RoomManager {
 
 
     async addUser(socketId:string){
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
+        if (queue.find(socketId)) {
+            return;
+        }
         NUM_OF_PLAYERS++;
-        console.log("Number of players ---> "  , socketId ," => " , NUM_OF_PLAYERS)
+        console.log("[match] user queued", { socketId, userCount: NUM_OF_PLAYERS });
         queue.enqueue({id:socketId})
-        console.log("PLAYERS IN QUEUE -> " , queue.size())
+        console.log("[match] queue size", queue.size())
         if(queue.size()>1){
-            console.log(":: Pair found ::")
+            console.log("[match] pair found")
             const user1 = queue.dequeue()
             const user2 = queue.dequeue()
             if(user1 && user2) {
-                console.log("requesting offer")
                 const room = this.createRoom(user1 , user2)
                 this.io.to(user1.id).to(user2.id).emit('joined' , {room})
                 this.io.to(user1.id).emit("send-offer")
-                console.log("sent offer request to :: " , user1.id)
+                console.log("[match] room created", { room, offerer: user1.id, answerer: user2.id });
             }
-        }
-        else {
-            console.log("NO PAIR FOUND")
         }
 
         this.io.emit("user-count" , NUM_OF_PLAYERS)
     }
 
     handleOffer(socketId:string , roomId:string, offer:any){
-        console.log("OFFER SENT BY :: " , socketId , " FOR ROOM ::  " , roomId)
+        console.log("[webrtc] forwarding offer", { socketId, roomId });
 
         const room = this.rooms.get(roomId)
         if(!room) return
         const reciever = room?.user1.id===socketId ? room.user2.id : room?.user1.id
-        console.log("SENDING OFFER TO  :: " , reciever)
+        console.log("[webrtc] offer recipient", { recipient: reciever });
         
         this.io.to(reciever).emit("offer" , offer)
 
@@ -94,7 +90,7 @@ export class RoomManager {
         const room = this.rooms.get(roomId)
         if(!room) return
         const reciever = room?.user1.id===socketId ? room.user2.id : room?.user1.id
-        console.log("RECIEVED ANSWER SENDING TO :: " , reciever)
+        console.log("[webrtc] forwarding answer", { socketId, roomId, recipient: reciever });
 
         
         this.io.to(reciever).emit("answer" , offer)
@@ -112,20 +108,21 @@ export class RoomManager {
     
 
     handleDisconnect(socketId:string){
-        console.log("DISCONNECTED :: " , socketId)
+        console.log("[match] disconnect", { socketId });
         const itemToRemove = queue.find(socketId);
-        NUM_OF_PLAYERS--;
+        if (NUM_OF_PLAYERS > 0) {
+            NUM_OF_PLAYERS--;
+        }
         queue.printQueue()
         if (itemToRemove) {
             queue.remove(itemToRemove);
-            console.log(`Removed item with id ${socketId}.`);
+            console.log("[match] removed disconnected user from queue", { socketId });
         }
         queue.printQueue()
         this.rooms.forEach((room , roomId)=>{
-            console.log("ROOM ::  " , roomId , "USER1 :: ", room.user1.id , "  USER2 :: " , room.user2.id)
             if(room.user1.id==socketId || room.user2.id == socketId){
                 this.rooms.delete(roomId)
-                console.log("DELETING ROOM :: " , roomId)
+                console.log("[match] deleted room", { roomId });
                 this.io.to(room.user1.id).to(room?.user2.id).emit("leaveRoom")
             }
         })
@@ -135,10 +132,9 @@ export class RoomManager {
     handleLeaveRoom(socketId:string){
         console.log("LEAVING REQUEST FROM :: " , socketId)
         this.rooms.forEach((room , roomId)=>{
-            console.log("ROOM ::  " , roomId , "USER1 :: ", room.user1.id , "  USER2 :: " , room.user2.id)
             if(room.user1.id==socketId || room.user2.id == socketId){
                 this.rooms.delete(roomId)
-                console.log("DELETING ROOM :: " , roomId)
+                console.log("[match] deleted room", { roomId });
                 
                 this.io.to(room.user1.id).to(room?.user2.id).emit("leaveRoom")
             }
@@ -157,5 +153,4 @@ export class RoomManager {
    
   
 }
-
 

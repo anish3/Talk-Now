@@ -1,15 +1,13 @@
-import { Socket } from "socket.io";
 import http from "http";
 import express from 'express';
-import { Server } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import { RoomManager } from "./Room";
-import cors from "cors"
-import { NUM_OF_PLAYERS } from "./Room";
+import cors from "cors";
 const app = express();
 app.use(cors({
-  origin: "*",
+  origin: process.env.CORS_ORIGINS?.split(",").map(origin => origin.trim()) ?? [],
   methods: ["GET", "POST"],
-  credentials: true, 
+  credentials: true,
 }));
 
 const server = http.createServer(app);
@@ -17,9 +15,9 @@ const port = process.env.PORT || 8000;
 
 const io = new Server(server, {
   cors: {
-    origin: "https://omelive.vercel.app/",
+    origin: process.env.CORS_ORIGINS?.split(",").map(origin => origin.trim()) ?? [],
     methods: ["GET", "POST"],
-    credentials: true, 
+    credentials: true,
   },
 });
 
@@ -29,42 +27,44 @@ app.get("/" , (req , res)=>{
 const manager = new RoomManager(io)
 
 io.on('connection', (socket: Socket) => {
-  console.log("user connected :: " , socket.id)
+  console.log("[socket] connected", { socketId: socket.id, transport: socket.conn.transport.name });
   socket.on("join" , ()=>{
-    console.log("user joined :: " , socket.id)
+    console.log("[match] join requested", { socketId: socket.id });
     manager.addUser(socket.id)
   })
   socket.on("disconnect", () => {
-    console.log("user disconnected :: " , socket.id) 
+    console.log("[socket] disconnected", { socketId: socket.id });
     manager.handleDisconnect(socket.id)
   }
   )
   socket.on("message" , (roomId:string ,message:string)=>{
+    console.log("[message] received", { socketId: socket.id, roomId });
     manager.handleMessage(roomId,socket.id , message)
   })
   socket.on("offer" , (roomId:string , offer:any)=>{
-    console.log("offer -> ")
+    console.log("[webrtc] offer received", { socketId: socket.id, roomId });
     manager.handleOffer(socket.id ,roomId , offer)
   })
 
   socket.on("answer" , (roomId:string , offer:any)=>{
-    console.log("answer -> ")
-
+    console.log("[webrtc] answer received", { socketId: socket.id, roomId });
     manager.handleAnswer(socket.id , roomId , offer)
   })
   socket.on("ice-candidates" , (roomId:string , iceCandidates:any)=>{
-    console.log("iceCandidates -> " )
-
+    console.log("[webrtc] ICE candidate received", { socketId: socket.id, roomId });
     manager.handleIceCandidates(socket.id , roomId , iceCandidates)
   })
+  socket.on("webrtc-state", (roomId: string, state: { iceConnectionState: string; connectionState: string }) => {
+    console.log("[webrtc] client connection state", { socketId: socket.id, roomId, ...state });
+  });
 
   socket.on("leaveRoom" , (roomId:string)=>{
-    console.log("LEAVE ROOM REQUEST FROM " , socket.id)
+    console.log("[match] leave requested", { socketId: socket.id, roomId });
     manager.handleLeaveRoom(socket.id)
   })
 });
 
 server.listen(Number(port) , "0.0.0.0", () => {
-    console.log('listening on *:' , port);
+    console.log('[server] listening', { port, origins: process.env.CORS_ORIGINS ?? "" });
 
 });
