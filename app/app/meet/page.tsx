@@ -16,9 +16,12 @@ const Page = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const [reConnect, setReConnect] = useState<boolean>(false)
+  const [connectionStatus, setConnectionStatus] = useState("Connecting to server…")
   const handleSend = (e:any) => {
      e.preventDefault();  // Prevent default form submission behavior
     e.stopPropagation(); //
@@ -28,17 +31,50 @@ const Page = () => {
     setMessageText("")
   }
   const handleSkip = () => {
-    socket.emit("leaveRoom")
+    socket?.emit("leaveRoom")
   }
   useEffect(() => {
-    //@ts-ignore
-    socket = io(process.env.NEXT_PUBLIC_SOCKET_URL)
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+    if (!socketUrl) {
+      setConnectionStatus("Server URL is not configured");
+      console.error("[socket] NEXT_PUBLIC_SOCKET_URL is missing");
+      return;
+    }
+
+    socket = io(socketUrl, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 8,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 10000,
+      timeout: 20000,
+    });
     const peerConnection = new RTCPeerConnection(configuration);
-    console.log("connection started .... sending join message")
-    socket.emit("join")
+    const pendingCandidates: RTCIceCandidateInit[] = [];
+    let hasJoinedRoom = false;
+    let isOfferer = false;
+    let mediaError = false;
+
+    socket.on("connect", () => {
+      console.log("[socket] connected", { socketId: socket.id, transport: socket.io.engine.transport.name });
+      setConnectionStatus("Waiting for a partner…");
+      socket.emit("join");
+    });
+    socket.on("connect_error", (error) => {
+      console.error("[socket] connection error", error.message);
+      setConnectionStatus("Unable to reach server. Retrying…");
+    });
+    socket.on("disconnect", (reason) => {
+      console.warn("[socket] disconnected", { reason });
+      if (reason !== "io client disconnect") {
+        setConnectionStatus("Connection lost. Retrying…");
+      }
+    });
+
     const getUserMedia = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: "user" }, audio: true });
+        localStreamRef.current = stream;
         setLocalStream(stream);
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
@@ -46,47 +82,50 @@ const Page = () => {
         stream?.getTracks().forEach(track => {
           peerConnection.addTrack(track, stream);
         });
-        console.log("ADDED LOCAL TRACKS TO PC")
+        console.log("[webrtc] local tracks added")
       } catch (error) {
-        console.error('Error accessing media devices:', error);
+        mediaError = true;
+        setConnectionStatus("Camera/microphone permission is required");
+        console.error("[webrtc] getUserMedia failed", error);
       }
     };
     const createOffer = async () => {
+      if (!isOfferer || !hasJoinedRoom || !roomId || mediaError) return;
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      console.log("CREATED OFFER SENDING TO :: ", roomId)
+      console.log("[webrtc] sending offer", { roomId });
       socket.emit("offer", roomId, offer)
     }
     const sendAnswer = async () => {
+      if (!roomId || mediaError) return;
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
+      console.log("[webrtc] sending answer", { roomId });
       socket.emit("answer", roomId, answer);
     }
     getUserMedia()
     const handleIceCandidate = (event: RTCPeerConnectionIceEvent) => {
       if (event.candidate) {
         const iceCandidate = event.candidate
-        console.log("SENDING ICE CANDIDATES")
-        socket.emit("ice-candidates", roomId, iceCandidate
-        )
+        if (hasJoinedRoom && roomId) {
+          console.log("[webrtc] sending ICE candidate", { roomId, type: iceCandidate.candidate.split(" ")[7] });
+          socket.emit("ice-candidates", roomId, iceCandidate);
+        }
       }
     }
     const handleTrack = (event: RTCTrackEvent) => {
-      console.log("HANDLE TRACK LISTENER")
-      const newMediaStream = new MediaStream()
-      event.streams[0].getTracks().forEach(track => {
-        newMediaStream.addTrack(track)
-      })
+      console.log("[webrtc] remote track received");
+      const newMediaStream = event.streams[0] ?? new MediaStream([event.track]);
+      remoteStreamRef.current = newMediaStream;
       setRemoteStream(newMediaStream)
-      console.log("SETTING REMOTE STREAM :: ", newMediaStream)
       if (remoteVideoRef.current)
         remoteVideoRef.current.srcObject = newMediaStream;
-      console.log("SET THE remotevideo REF")
+      setConnectionStatus("Connected");
     }
     const handleNegotiation = async (e: Event) => {
       try {
         if (!roomId) return
-        console.log("NEGOTIATION NEEDED: Creating offer")
+        console.log("[webrtc] negotiation needed")
         await createOffer();
       } catch (error) {
         console.error("Error during negotiation:", error);
@@ -94,38 +133,55 @@ const Page = () => {
     }
     socket.on("joined", ({ room }: { room: string }) => {
       roomId = room
-      console.log("JOINED ROOM :: ", room)
-      console.log("MY SOCKET ID :: ", socket.id)
+      hasJoinedRoom = true;
+      setConnectionStatus("Connecting video…");
+      console.log("[match] joined room", { room, socketId: socket.id });
     })
     socket.on("leaveRoom", () => {
       setMessages([])
-      console.log("ROOM LEAVING REQUEST RECEIVED")
+      console.log("[match] leave received")
       setRemoteStream(null)
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
       roomId = ""
-      remoteStream?.getTracks().forEach(track => track.stop());
-      localStream?.getTracks().forEach(track => track.stop());
+      remoteStreamRef.current?.getTracks().forEach(track => track.stop());
+      localStreamRef.current?.getTracks().forEach(track => track.stop());
+      remoteStreamRef.current = null;
+      localStreamRef.current = null;
       setRemoteStream(null);
       setLocalStream(null)
       console.log("Room Id after leave :: ", roomId)
       setReConnect(prev => !prev)
     })
     socket.on("answer", (offer: RTCSessionDescriptionInit) => {
-      console.log("ANSWER RECIEVED")
-      peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      console.log("[webrtc] answer received");
+      peerConnection.setRemoteDescription(new RTCSessionDescription(offer)).then(async () => {
+        while (pendingCandidates.length) {
+          await peerConnection.addIceCandidate(pendingCandidates.shift()!);
+        }
+      }).catch(error => console.error("[webrtc] answer handling failed", error));
     })
     socket.on("send-offer", () => {
-      console.log("OFFER REQUEST RECIEVED")
+      console.log("[webrtc] offer requested");
+      isOfferer = true;
       createOffer()
     })
     socket.on('offer', (offer: RTCSessionDescriptionInit) => {
-      console.log("OFFER RECEIVED SENDING ANSWER ")
-      peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      sendAnswer()
+      console.log("[webrtc] offer received");
+      peerConnection.setRemoteDescription(new RTCSessionDescription(offer)).then(async () => {
+        while (pendingCandidates.length) {
+          await peerConnection.addIceCandidate(pendingCandidates.shift()!);
+        }
+        await sendAnswer();
+      }).catch(error => console.error("[webrtc] offer handling failed", error));
     })
     socket.on("ice-candidates", (iceCandidate: RTCIceCandidate) => {
-      console.log("RECEIVED ICE CANDIDATES")
-      peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidate));
+      console.log("[webrtc] ICE candidate received");
+      if (peerConnection.remoteDescription) {
+        peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidate))
+          .catch(error => console.error("[webrtc] ICE candidate failed", error));
+      } else {
+        pendingCandidates.push(iceCandidate);
+      }
     })
     socket.on("message", (msg: string) => {
       setMessages(prev => [{ from: "remote", message: msg }, ...prev])
@@ -133,18 +189,34 @@ const Page = () => {
     socket.on('user-count', (count: string) => {
       setUserCount(count)
     })
+    peerConnection.addEventListener("iceconnectionstatechange", () => {
+      console.log("[webrtc] ICE connection state", peerConnection.iceConnectionState);
+      socket.emit("webrtc-state", roomId, {
+        iceConnectionState: peerConnection.iceConnectionState,
+        connectionState: peerConnection.connectionState,
+      });
+      if (peerConnection.iceConnectionState === "failed") {
+        setConnectionStatus("Video connection failed. Check TURN settings and retry.");
+      }
+    });
+    peerConnection.addEventListener("connectionstatechange", () => {
+      console.log("[webrtc] connection state", peerConnection.connectionState);
+      socket.emit("webrtc-state", roomId, {
+        iceConnectionState: peerConnection.iceConnectionState,
+        connectionState: peerConnection.connectionState,
+      });
+    });
     peerConnection.addEventListener('icecandidate', handleIceCandidate)
     console.log("ICE CANDIDATE EVENT LISTNER STARTED")
     peerConnection.addEventListener('track', handleTrack);
     peerConnection.addEventListener('negotiationneeded', handleNegotiation);
     return () => {
       socket.removeAllListeners()
-      console.log("CLEANUP ALL LISTENERS")
       socket.disconnect()
       peerConnection.removeEventListener('icecandidate', handleIceCandidate)
       peerConnection.removeEventListener('track', handleTrack)
       peerConnection.close()
-      console.log("CLOSED PEER CONNECTION ")
+      roomId = "";
     }
   }, [reConnect]);
   const messagesEndRef = useRef(null);
@@ -164,6 +236,18 @@ const focusInput = () => {
     <>
       <div className='bg-zinc-900 min-h-screen flex flex-col '>
         <AppBar online={userCount} />
+        <div className='mx-4 md:mx-20 mt-2 flex items-center justify-between gap-3 text-sm text-white' role="status" aria-live="polite">
+          <span>{connectionStatus}</span>
+          {(connectionStatus.includes("Unable") || connectionStatus.includes("lost") || connectionStatus.includes("failed")) && (
+            <button
+              type="button"
+              className="rounded-lg bg-blue-500 px-3 py-1"
+              onClick={() => setReConnect(prev => !prev)}
+            >
+              Retry
+            </button>
+          )}
+        </div>
   
         <div className='flex-grow mt-2 mx-4 md:mx-20 grid grid-cols-1 md:grid-cols-12 gap-6'>
           <div className='col-span-1 md:col-span-5 flex flex-col gap-4'>
