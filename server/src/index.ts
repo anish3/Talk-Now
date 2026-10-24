@@ -7,9 +7,9 @@ import cors from "cors"
 import { NUM_OF_PLAYERS } from "./Room";
 const app = express();
 app.use(cors({
-  origin: "*",
+  origin: "https://talk-now-nine.vercel.app",
   methods: ["GET", "POST"],
-  credentials: true, 
+  credentials: true,
 }));
 
 const server = http.createServer(app);
@@ -17,9 +17,9 @@ const port = process.env.PORT || 8000;
 
 const io = new Server(server, {
   cors: {
-    origin: "https://omelive.vercel.app/",
+    origin: "https://talk-now-nine.vercel.app",
     methods: ["GET", "POST"],
-    credentials: true, 
+    credentials: true,
   },
 });
 
