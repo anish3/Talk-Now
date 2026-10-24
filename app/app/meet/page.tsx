@@ -34,55 +34,124 @@ const Page = () => {
     //@ts-ignore
     socket = io(process.env.NEXT_PUBLIC_SOCKET_URL)
     const peerConnection = new RTCPeerConnection(configuration);
-    console.log("connection started .... sending join message")
-    socket.emit("join")
-    const getUserMedia = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: "user" }, audio: true });
-        setLocalStream(stream);
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-        stream?.getTracks().forEach(track => {
-          peerConnection.addTrack(track, stream);
-        });
-        console.log("ADDED LOCAL TRACKS TO PC")
-      } catch (error) {
-        console.error('Error accessing media devices:', error);
-      }
-    };
-    const createOffer = async () => {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      console.log("CREATED OFFER SENDING TO :: ", roomId)
-      socket.emit("offer", roomId, offer)
+   
+  
+const getUserMedia = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: 1280,
+        height: 720,
+        facingMode: "user",
+      },
+      audio: true,
+    });
+
+    setLocalStream(stream);
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
     }
-    const sendAnswer = async () => {
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit("answer", roomId, answer);
+
+    stream.getTracks().forEach((track) => {
+      peerConnection.addTrack(track, stream);
+    });
+
+    console.log("ADDED LOCAL TRACKS TO PC");
+    console.log("Camera/mic ready. Joining matchmaking queue.");
+
+    socket.emit("join");
+  } catch (error) {
+    console.error("Error accessing media devices:", error);
+  }
+};
+
+    
+const createOffer = async () => {
+  try {
+    if (!roomId) {
+      console.log("Room ID not ready. Cannot create offer yet.");
+      return;
     }
+
+    const offer = await peerConnection.createOffer();
+
+    await peerConnection.setLocalDescription(offer);
+
+    console.log("CREATED OFFER SENDING TO:", roomId);
+
+    socket.emit("offer", roomId, offer);
+  } catch (error) {
+    console.error("Error creating or sending offer:", error);
+  }
+};
+
+   
+const sendAnswer = async () => {
+  try {
+    if (!roomId) {
+      console.error("Room ID missing. Cannot send answer.");
+      return;
+    }
+
+    const answer = await peerConnection.createAnswer();
+
+    await peerConnection.setLocalDescription(answer);
+
+    console.log("Sending answer to room:", roomId);
+
+    socket.emit("answer", roomId, answer);
+  } catch (error) {
+    console.error("Error creating or sending answer:", error);
+  }
+};
+
     getUserMedia()
-    const handleIceCandidate = (event: RTCPeerConnectionIceEvent) => {
-      if (event.candidate) {
-        const iceCandidate = event.candidate
-        console.log("SENDING ICE CANDIDATES")
-        socket.emit("ice-candidates", roomId, iceCandidate
-        )
-      }
+   
+const handleIceCandidate = (event: RTCPeerConnectionIceEvent) => {
+  if (event.candidate) {
+    console.log("SENDING ICE CANDIDATE");
+
+    if (!roomId) {
+      console.warn("Room ID missing. ICE candidate not sent.");
+      return;
     }
-    const handleTrack = (event: RTCTrackEvent) => {
-      console.log("HANDLE TRACK LISTENER")
-      const newMediaStream = new MediaStream()
-      event.streams[0].getTracks().forEach(track => {
-        newMediaStream.addTrack(track)
-      })
-      setRemoteStream(newMediaStream)
-      console.log("SETTING REMOTE STREAM :: ", newMediaStream)
-      if (remoteVideoRef.current)
-        remoteVideoRef.current.srcObject = newMediaStream;
-      console.log("SET THE remotevideo REF")
+
+    socket.emit("ice-candidates", roomId, event.candidate);
+  }
+};
+
+    
+const handleTrack = (event: RTCTrackEvent) => {
+  console.log("REMOTE TRACK RECEIVED");
+
+  let newMediaStream: MediaStream;
+
+  if (event.streams && event.streams.length > 0) {
+    newMediaStream = event.streams[0];
+  } else {
+    newMediaStream = remoteVideoRef.current?.srcObject as MediaStream;
+
+    if (!newMediaStream) {
+      newMediaStream = new MediaStream();
     }
+
+    const existingTrack = newMediaStream
+      .getTracks()
+      .find((track) => track.id === event.track.id);
+
+    if (!existingTrack) {
+      newMediaStream.addTrack(event.track);
+    }
+  }
+
+  setRemoteStream(newMediaStream);
+
+  if (remoteVideoRef.current) {
+    remoteVideoRef.current.srcObject = newMediaStream;
+  }
+};
+
     const handleNegotiation = async (e: Event) => {
       try {
         if (!roomId) return
@@ -110,23 +179,68 @@ const Page = () => {
       console.log("Room Id after leave :: ", roomId)
       setReConnect(prev => !prev)
     })
-    socket.on("answer", (offer: RTCSessionDescriptionInit) => {
-      console.log("ANSWER RECIEVED")
-      peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    })
+    socket.on("answer", async (answer: RTCSessionDescriptionInit) => {
+  try {
+    console.log("ANSWER RECEIVED");
+
+    await peerConnection.setRemoteDescription(
+      new RTCSessionDescription(answer)
+    );
+
+    console.log("REMOTE ANSWER SET SUCCESSFULLY");
+  } catch (error) {
+    console.error("Error setting remote answer:", error);
+  }
+});
     socket.on("send-offer", () => {
       console.log("OFFER REQUEST RECIEVED")
       createOffer()
     })
-    socket.on('offer', (offer: RTCSessionDescriptionInit) => {
-      console.log("OFFER RECEIVED SENDING ANSWER ")
-      peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-      sendAnswer()
-    })
-    socket.on("ice-candidates", (iceCandidate: RTCIceCandidate) => {
-      console.log("RECEIVED ICE CANDIDATES")
-      peerConnection.addIceCandidate(new RTCIceCandidate(iceCandidate));
-    })
+    
+socket.on("offer", async (offer: RTCSessionDescriptionInit) => {
+  try {
+    console.log("OFFER RECEIVED SENDING ANSWER");
+
+    await peerConnection.setRemoteDescription(
+      new RTCSessionDescription(offer)
+    );
+
+    console.log("REMOTE DESCRIPTION SET");
+
+    await sendAnswer();
+  } catch (error) {
+    console.error("Error handling remote offer:", error);
+  }
+});
+
+    
+const pendingIceCandidates: RTCIceCandidateInit[] = [];
+
+const addIceCandidateSafely = async (
+  iceCandidate: RTCIceCandidateInit
+) => {
+  try {
+    if (peerConnection.remoteDescription) {
+      await peerConnection.addIceCandidate(
+        new RTCIceCandidate(iceCandidate)
+      );
+      console.log("ICE CANDIDATE ADDED");
+    } else {
+      pendingIceCandidates.push(iceCandidate);
+      console.log("ICE CANDIDATE QUEUED");
+    }
+  } catch (error) {
+    console.error("Error adding ICE candidate:", error);
+  }
+};
+
+socket.on(
+  "ice-candidates",
+  async (iceCandidate: RTCIceCandidateInit) => {
+    await addIceCandidateSafely(iceCandidate);
+  }
+);
+
     socket.on("message", (msg: string) => {
       setMessages(prev => [{ from: "remote", message: msg }, ...prev])
     })
