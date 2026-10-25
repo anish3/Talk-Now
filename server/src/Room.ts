@@ -1,5 +1,4 @@
 
-import { Socket } from "socket.io";
 import { v4 as uuidv4 } from 'uuid';
 import Queue from "./Queue";
 import { Server } from 'socket.io';
@@ -21,7 +20,6 @@ const iceServers = [
 
 */
 
-let NUM_OF_PLAYERS = 0
 interface User {
     id: string;
 }
@@ -31,13 +29,12 @@ interface Room {
     user2: User;
 }
 
-export {NUM_OF_PLAYERS}
-
-const queue = new Queue<User>()
-
 export class RoomManager {
     private rooms: Map<string, Room>;
     private io:Server
+    private queue: Queue<User>;
+    private connectedUsers: Set<string>;
+    private pendingJoins: Map<string, ReturnType<typeof setTimeout>>;
 
     private recentPartners: Map<string, string[]> = new Map();
 
@@ -64,6 +61,52 @@ private rememberMatch(user1: string, user2: string): void {
     constructor(io:Server) {
         this.rooms = new Map<string, Room>();
         this.io = io;
+        this.queue = new Queue<User>();
+        this.connectedUsers = new Set<string>();
+        this.pendingJoins = new Map<string, ReturnType<typeof setTimeout>>();
+    }
+
+    /**
+     * Online users means currently connected Socket.IO sockets on this
+     * server instance. Searching and matched users both count once; a socket
+     * is counted immediately on connection and removed exactly once on
+     * disconnect.
+     */
+    handleConnect(socketId: string): void {
+        if (this.connectedUsers.has(socketId)) {
+            return;
+        }
+
+        this.connectedUsers.add(socketId);
+        this.emitOnlineCount();
+    }
+
+    getOnlineCount(): number {
+        return this.connectedUsers.size;
+    }
+
+    private emitOnlineCount(): void {
+        this.io.emit("user-count", this.getOnlineCount());
+    }
+
+    private isInRoom(socketId: string): boolean {
+        for (const room of this.rooms.values()) {
+            if (room.user1.id === socketId || room.user2.id === socketId) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private cancelPendingJoin(socketId: string): void {
+        const timer = this.pendingJoins.get(socketId);
+        if (!timer) {
+            return;
+        }
+
+        clearTimeout(timer);
+        this.pendingJoins.delete(socketId);
     }
 
     createRoom(user1: User , user2: User){
@@ -74,67 +117,70 @@ private rememberMatch(user1: string, user2: string): void {
 
 
     
-async addUser(socketId: string) {
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-
-  // Prevent duplicate queue entries.
-  if (queue.find(socketId)) {
+addUser(socketId: string): void {
+  if (
+    !this.connectedUsers.has(socketId) ||
+    this.pendingJoins.has(socketId) ||
+    this.queue.find(socketId) ||
+    this.isInRoom(socketId)
+  ) {
     return;
   }
 
-  NUM_OF_PLAYERS++;
+  const timer = setTimeout(() => {
+    this.pendingJoins.delete(socketId);
 
-  console.log("Number of players --->", socketId, "=>", NUM_OF_PLAYERS);
+    if (
+      !this.connectedUsers.has(socketId) ||
+      this.queue.find(socketId) ||
+      this.isInRoom(socketId)
+    ) {
+      return;
+    }
 
-  queue.enqueue({ id: socketId });
-  console.log("PLAYERS IN QUEUE ->", queue.size());
+    this.queue.enqueue({ id: socketId });
+    console.log("PLAYERS IN QUEUE ->", this.queue.size());
+    this.matchWaitingUsers();
+  }, 3000);
 
-  this.io.emit("user-count", NUM_OF_PLAYERS);
+  this.pendingJoins.set(socketId, timer);
+}
 
-  if (queue.size() < 2) {
+private matchWaitingUsers(): void {
+  if (this.queue.size() < 2) {
     console.log("NO PAIR FOUND");
     return;
   }
 
-  // Collect waiting users.
   const waitingUsers: User[] = [];
 
-  while (queue.size() > 0) {
-    const user = queue.dequeue();
-    if (user) waitingUsers.push(user);
+  while (this.queue.size() > 0) {
+    const user = this.queue.dequeue();
+    if (user && this.connectedUsers.has(user.id)) {
+      waitingUsers.push(user);
+    }
   }
 
   if (waitingUsers.length < 2) {
-    waitingUsers.forEach((user) => queue.enqueue(user));
+    waitingUsers.forEach((user) => this.queue.enqueue(user));
     return;
   }
 
-  // Keep the longest-waiting user first.
+  // Keep the longest-waiting connected user first.
   const user1 = waitingUsers[0];
   const candidates = waitingUsers.slice(1);
-
-  // Prefer a partner not matched recently.
   const freshCandidates = candidates.filter(
-    (candidate) =>
-      !this.hasRecentlyMatched(user1.id, candidate.id)
+    (candidate) => !this.hasRecentlyMatched(user1.id, candidate.id)
   );
-
-  // Allow a repeat if no alternative is available.
   const availableCandidates =
     freshCandidates.length > 0 ? freshCandidates : candidates;
-
-  const randomIndex = Math.floor(
-    Math.random() * availableCandidates.length
-  );
-
+  const randomIndex = Math.floor(Math.random() * availableCandidates.length);
   const user2 = availableCandidates[randomIndex];
 
-  // Put unmatched users back in the queue.
   const selectedIds = new Set([user1.id, user2.id]);
-
   waitingUsers
     .filter((user) => !selectedIds.has(user.id))
-    .forEach((user) => queue.enqueue(user));
+    .forEach((user) => this.queue.enqueue(user));
 
   this.rememberMatch(user1.id, user2.id);
 
@@ -185,14 +231,12 @@ async addUser(socketId: string) {
 
     handleDisconnect(socketId:string){
         console.log("DISCONNECTED :: " , socketId)
-        const itemToRemove = queue.find(socketId);
-        NUM_OF_PLAYERS--;
-        queue.printQueue()
+        this.cancelPendingJoin(socketId);
+        const itemToRemove = this.queue.find(socketId);
         if (itemToRemove) {
-            queue.remove(itemToRemove);
+            this.queue.remove(itemToRemove);
             console.log(`Removed item with id ${socketId}.`);
         }
-        queue.printQueue()
         this.rooms.forEach((room , roomId)=>{
             console.log("ROOM ::  " , roomId , "USER1 :: ", room.user1.id , "  USER2 :: " , room.user2.id)
             if(room.user1.id==socketId || room.user2.id == socketId){
@@ -201,11 +245,20 @@ async addUser(socketId: string) {
                 this.io.to(room.user1.id).to(room?.user2.id).emit("leaveRoom")
             }
         })
-        this.io.emit("user-count" , NUM_OF_PLAYERS)
+
+        if (this.connectedUsers.delete(socketId)) {
+            this.emitOnlineCount();
+        }
     }
 
     handleLeaveRoom(socketId:string){
         console.log("LEAVING REQUEST FROM :: " , socketId)
+        this.cancelPendingJoin(socketId);
+        const itemToRemove = this.queue.find(socketId);
+        if (itemToRemove) {
+            this.queue.remove(itemToRemove);
+        }
+
         this.rooms.forEach((room , roomId)=>{
             console.log("ROOM ::  " , roomId , "USER1 :: ", room.user1.id , "  USER2 :: " , room.user2.id)
             if(room.user1.id==socketId || room.user2.id == socketId){

@@ -32,3 +32,48 @@ html, body {
   .hide-scrollbar {
     overflow-y: auto;
   }
+
+  .searching-orb {
+    animation: searching-orb-float 3s ease-in-out infinite;
+  }
+
+  .searching-dot {
+    animation: searching-dot-bounce 1.2s ease-in-out infinite;
+  }
+
+  .searching-dot-delay-1 {
+    animation-delay: 150ms;
+  }
+
+  .searching-dot-delay-2 {
+    animation-delay: 300ms;
+  }
+
+  @keyframes searching-orb-float {
+    0%, 100% {
+      transform: translateY(0) scale(1);
+      box-shadow: 0 0 0 0 rgba(232, 121, 249, 0.18);
+    }
+    50% {
+      transform: translateY(-5px) scale(1.04);
+      box-shadow: 0 0 0 14px rgba(232, 121, 249, 0.03);
+    }
+  }
+
+  @keyframes searching-dot-bounce {
+    0%, 60%, 100% {
+      opacity: 0.35;
+      transform: translateY(0);
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-5px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .searching-orb,
+    .searching-dot {
+      animation: none;
+    }
+  }

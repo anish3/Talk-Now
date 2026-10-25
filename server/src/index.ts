@@ -4,10 +4,14 @@ import express from 'express';
 import { Server } from 'socket.io';
 import { RoomManager } from "./Room";
 import cors from "cors"
-import { NUM_OF_PLAYERS } from "./Room";
 const app = express();
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://talk-now-nine.vercel.app",
+];
+
 app.use(cors({
-  origin: "https://talk-now-nine.vercel.app",
+  origin: allowedOrigins,
   methods: ["GET", "POST"],
   credentials: true,
 }));
@@ -17,7 +21,7 @@ const port = process.env.PORT || 8000;
 
 const io = new Server(server, {
   cors: {
-    origin: "https://talk-now-nine.vercel.app",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -30,6 +34,7 @@ const manager = new RoomManager(io)
 
 io.on('connection', (socket: Socket) => {
   console.log("user connected :: " , socket.id)
+  manager.handleConnect(socket.id)
   socket.on("join" , ()=>{
     console.log("user joined :: " , socket.id)
     manager.addUser(socket.id)
