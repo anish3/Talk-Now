@@ -35,6 +35,11 @@ export class RoomManager {
     private queue: Queue<User>;
     private connectedUsers: Set<string>;
     private pendingJoins: Map<string, ReturnType<typeof setTimeout>>;
+    private messageRateLimits: Map<string, { windowStart: number; count: number }>;
+    private readonly messageRateLimit = 5;
+    private readonly messageRateWindowMs = 5000;
+    private readonly maxSessionDescriptionSize = 100000;
+    private readonly maxIceCandidateSize = 16000;
 
     private recentPartners: Map<string, string[]> = new Map();
 
@@ -58,12 +63,25 @@ private rememberMatch(user1: string, user2: string): void {
   remember(user2, user1);
 }
 
+private clearRecentPartner(socketId: string): void {
+  this.recentPartners.delete(socketId);
+
+  this.recentPartners.forEach((partners, userId) => {
+    const remainingPartners = partners.filter((partner) => partner !== socketId);
+
+    if (remainingPartners.length !== partners.length) {
+      this.recentPartners.set(userId, remainingPartners);
+    }
+  });
+}
+
     constructor(io:Server) {
         this.rooms = new Map<string, Room>();
         this.io = io;
         this.queue = new Queue<User>();
         this.connectedUsers = new Set<string>();
         this.pendingJoins = new Map<string, ReturnType<typeof setTimeout>>();
+        this.messageRateLimits = new Map();
     }
 
     /**
@@ -99,6 +117,10 @@ private rememberMatch(user1: string, user2: string): void {
         return false;
     }
 
+    private isRoomMember(room: Room, socketId: string): boolean {
+        return room.user1.id === socketId || room.user2.id === socketId;
+    }
+
     private cancelPendingJoin(socketId: string): void {
         const timer = this.pendingJoins.get(socketId);
         if (!timer) {
@@ -107,6 +129,99 @@ private rememberMatch(user1: string, user2: string): void {
 
         clearTimeout(timer);
         this.pendingJoins.delete(socketId);
+    }
+
+    private canSendMessage(socketId: string): boolean {
+        const now = Date.now();
+        const current = this.messageRateLimits.get(socketId);
+
+        if (!current || now - current.windowStart >= this.messageRateWindowMs) {
+            this.messageRateLimits.set(socketId, { windowStart: now, count: 1 });
+            return true;
+        }
+
+        if (current.count >= this.messageRateLimit) {
+            return false;
+        }
+
+        current.count += 1;
+        return true;
+    }
+
+    private clearMessageRateLimit(socketId: string): void {
+        this.messageRateLimits.delete(socketId);
+    }
+
+    private isRecord(value: unknown): value is Record<string, unknown> {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            return false;
+        }
+
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+    }
+
+    private isWithinPayloadSize(value: unknown, maxSize: number): boolean {
+        try {
+            const serialized = JSON.stringify(value);
+            return typeof serialized === "string" && serialized.length <= maxSize;
+        } catch {
+            return false;
+        }
+    }
+
+    private isValidSessionDescription(
+        value: unknown,
+        expectedType: "offer" | "answer"
+    ): boolean {
+        if (!this.isRecord(value) || !this.isWithinPayloadSize(value, this.maxSessionDescriptionSize)) {
+            return false;
+        }
+
+        return (
+            value.type === expectedType &&
+            typeof value.sdp === "string" &&
+            value.sdp.trim().length > 0 &&
+            value.sdp.length <= this.maxSessionDescriptionSize
+        );
+    }
+
+    private isValidIceCandidate(value: unknown): boolean {
+        if (!this.isRecord(value) || !this.isWithinPayloadSize(value, this.maxIceCandidateSize)) {
+            return false;
+        }
+
+        if (typeof value.candidate !== "string" || value.candidate.length > 8192) {
+            return false;
+        }
+
+        if (
+            "sdpMid" in value &&
+            value.sdpMid !== null &&
+            (typeof value.sdpMid !== "string" || value.sdpMid.length > 256)
+        ) {
+            return false;
+        }
+
+        if (
+            "sdpMLineIndex" in value &&
+            value.sdpMLineIndex !== null &&
+            (typeof value.sdpMLineIndex !== "number" ||
+                !Number.isInteger(value.sdpMLineIndex) ||
+                value.sdpMLineIndex < 0)
+        ) {
+            return false;
+        }
+
+        if (
+            "usernameFragment" in value &&
+            value.usernameFragment !== null &&
+            (typeof value.usernameFragment !== "string" || value.usernameFragment.length > 256)
+        ) {
+            return false;
+        }
+
+        return true;
     }
 
     createRoom(user1: User , user2: User){
@@ -199,7 +314,8 @@ private matchWaitingUsers(): void {
         console.log("OFFER SENT BY :: " , socketId , " FOR ROOM ::  " , roomId)
 
         const room = this.rooms.get(roomId)
-        if(!room) return
+        if(!room || !this.isRoomMember(room, socketId)) return
+        if (!this.isValidSessionDescription(offer, "offer")) return
         const reciever = room?.user1.id===socketId ? room.user2.id : room?.user1.id
         console.log("SENDING OFFER TO  :: " , reciever)
         
@@ -210,7 +326,8 @@ private matchWaitingUsers(): void {
     handleAnswer(socketId:string , roomId:string, offer:any){
 
         const room = this.rooms.get(roomId)
-        if(!room) return
+        if(!room || !this.isRoomMember(room, socketId)) return
+        if (!this.isValidSessionDescription(offer, "answer")) return
         const reciever = room?.user1.id===socketId ? room.user2.id : room?.user1.id
         console.log("RECIEVED ANSWER SENDING TO :: " , reciever)
 
@@ -221,7 +338,8 @@ private matchWaitingUsers(): void {
 
     handleIceCandidates(socketId:string , roomId:string , iceCandidates:any){
         const room = this.rooms.get(roomId)
-        if(!room) return
+        if(!room || !this.isRoomMember(room, socketId)) return
+        if (!this.isValidIceCandidate(iceCandidates)) return
 
         const reciever = room?.user1.id===socketId ? room.user2.id : room?.user1.id
         this.io.to(reciever).emit("ice-candidates" , iceCandidates)
@@ -231,6 +349,8 @@ private matchWaitingUsers(): void {
 
     handleDisconnect(socketId:string){
         console.log("DISCONNECTED :: " , socketId)
+        this.clearMessageRateLimit(socketId);
+        this.clearRecentPartner(socketId);
         this.cancelPendingJoin(socketId);
         const itemToRemove = this.queue.find(socketId);
         if (itemToRemove) {
@@ -253,6 +373,7 @@ private matchWaitingUsers(): void {
 
     handleLeaveRoom(socketId:string){
         console.log("LEAVING REQUEST FROM :: " , socketId)
+        this.clearMessageRateLimit(socketId);
         this.cancelPendingJoin(socketId);
         const itemToRemove = this.queue.find(socketId);
         if (itemToRemove) {
@@ -273,14 +394,17 @@ private matchWaitingUsers(): void {
     handleMessage(roomId:string , socketId:string ,message:string){
         console.log("MESSAGE RECIEVED IN ::  " , roomId)
         const room = this.rooms.get(roomId)
-        if(!room) return
+        if(!room || !this.isRoomMember(room, socketId)) return
+
+        if (typeof message !== "string") return
+        const trimmedMessage = message.trim()
+        if (!trimmedMessage || trimmedMessage.length > 1000) return
+        if (!this.canSendMessage(socketId)) return
 
         const reciever = room?.user1.id===socketId ? room.user2.id : room?.user1.id
-        this.io.to(reciever).emit("message" , message)
+        this.io.to(reciever).emit("message" , trimmedMessage)
     }
     
    
   
 }
-
-

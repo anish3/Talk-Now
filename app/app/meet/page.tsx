@@ -70,14 +70,16 @@ const Page = () => {
     e.preventDefault();
     e.stopPropagation();
 
-    if (!socketRef.current || !roomIdRef.current || !messageText.trim()) {
+    const trimmedMessage = messageText.trim();
+
+    if (!socketRef.current || !roomIdRef.current || !trimmedMessage) {
       return;
     }
 
-    socketRef.current.emit("message", roomIdRef.current, messageText);
+    socketRef.current.emit("message", roomIdRef.current, trimmedMessage);
     setMessages((prev) => [
       ...prev,
-      { from: "host", message: messageText },
+      { from: "host", message: trimmedMessage },
     ]);
     setMessageText("");
   };
@@ -652,9 +654,9 @@ const Page = () => {
             </div>
           </header>
 
-          <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr] lg:items-stretch">
-            <section className="grid gap-5 sm:grid-cols-2" aria-label="Video conversation">
-              <div className="relative aspect-video min-h-0 overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#11162a] shadow-2xl shadow-black/25 sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
+          <div className="grid min-h-0 gap-5 lg:h-[30rem] lg:grid-cols-[1.2fr_0.8fr] lg:items-stretch">
+            <section className="grid min-h-0 min-w-0 gap-5 sm:grid-cols-2" aria-label="Video conversation">
+              <div className="relative aspect-video min-h-0 min-w-0 overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#11162a] shadow-2xl shadow-black/25 sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
                 <video
                   id="remoteVideo"
                   ref={remoteVideoRef}
@@ -691,7 +693,7 @@ const Page = () => {
                 )}
               </div>
 
-              <div className="relative aspect-video min-h-0 overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#11162a] shadow-2xl shadow-black/25 sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
+              <div className="relative aspect-video min-h-0 min-w-0 overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#11162a] shadow-2xl shadow-black/25 sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
                 <video
                   id="localVideo"
                   ref={localVideoRef}
@@ -707,7 +709,7 @@ const Page = () => {
               </div>
             </section>
 
-            <section className="flex min-h-[25rem] max-h-[34rem] min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/[0.055] shadow-2xl shadow-black/25 backdrop-blur-xl lg:min-h-[30rem] lg:max-h-none" aria-label="Text chat">
+            <section className="flex min-h-[25rem] max-h-[34rem] min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/[0.055] shadow-2xl shadow-black/25 backdrop-blur-xl lg:h-full lg:min-h-0" aria-label="Text chat">
               <div className="flex items-center justify-between border-b border-white/10 px-5 py-4 sm:px-6">
                 <div>
                   <p className="text-sm font-semibold text-white">Conversation</p>
@@ -716,7 +718,7 @@ const Page = () => {
                 <span className="rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Text chat</span>
               </div>
 
-              <div ref={chatScrollRef} onScroll={handleChatScroll} className="hide-scrollbar min-h-0 flex-grow overflow-y-auto overscroll-contain px-4 py-5 sm:px-6">
+              <div ref={chatScrollRef} onScroll={handleChatScroll} className="hide-scrollbar min-h-0 min-w-0 flex-grow overflow-y-auto overscroll-contain px-4 py-5 sm:px-6">
                 {messages.length === 0 ? (
                   <div className="flex h-full min-h-[16rem] flex-col items-center justify-center text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br from-fuchsia-400/15 to-blue-400/15 text-fuchsia-200" aria-hidden="true">
@@ -730,7 +732,7 @@ const Page = () => {
                     <div key={index} className={`mb-4 flex ${msg.from === "host" ? "justify-end" : "justify-start"}`}>
                       <div className={`max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-lg sm:max-w-[80%] ${msg.from === "host" ? "rounded-br-md bg-gradient-to-br from-fuchsia-500 to-blue-500 text-white" : "rounded-bl-md border border-white/10 bg-white/[0.08] text-slate-200"}`}>
                         <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/55">{msg.from === "host" ? "You" : "Stranger"}</p>
-                        <p className="break-words whitespace-pre-wrap">{msg.message}</p>
+                        <p className="break-all break-words whitespace-pre-wrap">{msg.message}</p>
                       </div>
                     </div>
                   ))
