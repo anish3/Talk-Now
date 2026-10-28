@@ -75,8 +75,8 @@ function Page() {
   return (
     <main className="royal-shell min-h-screen overflow-hidden font-sans text-white">
       <div className="relative isolate">
-        <div aria-hidden="true" className="royal-ambient royal-ambient-one left-1/2 top-[-18rem] -z-10 h-[38rem] w-[58rem] -translate-x-1/2 blur-[100px]" />
-        <div aria-hidden="true" className="royal-ambient royal-ambient-two right-[-20rem] top-[24rem] -z-10 h-[34rem] w-[34rem] blur-[100px]" />
+        <div aria-hidden="true" className="absolute royal-ambient royal-ambient-one left-1/2 top-[-18rem] -z-10 h-[38rem] w-[58rem] -translate-x-1/2 blur-[100px]" />
+        <div aria-hidden="true" className="absolute royal-ambient royal-ambient-two right-[-20rem] top-[24rem] -z-10 h-[34rem] w-[34rem] blur-[100px]" />
 
         <nav className="royal-nav mx-auto flex w-full max-w-7xl items-center justify-between border-b px-5 py-6 sm:px-8 lg:px-10" aria-label="Primary navigation">
           <Link href="/" className="group flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 focus-visible:ring-offset-4 focus-visible:ring-offset-[#070914]">
