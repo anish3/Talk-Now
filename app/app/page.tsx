@@ -8,24 +8,31 @@ const headingFont = localFont({
 const features = [
   {
     number: "01",
-    title: "Random video chat",
+    title: "Random matching",
     description:
-      "Start a live video conversation with someone new through the existing matchmaking experience.",
+      "Start a live video conversation with someone new through a simple, fast match flow.",
     icon: "video",
   },
   {
     number: "02",
-    title: "Text when you want",
+    title: "Private conversations",
     description:
-      "Use text chat alongside your call to keep the conversation moving naturally.",
+      "Keep the interaction personal and lightweight: show up, talk, and move on when you are ready.",
     icon: "chat",
   },
   {
     number: "03",
     title: "Skip at your pace",
     description:
-      "When a conversation is not the right fit, skip and look for a new connection.",
+      "When a conversation is not the right fit, skip and look for a new connection in seconds.",
     icon: "arrow",
+  },
+  {
+    number: "04",
+    title: "Signature experiences",
+    description:
+      "Planned social moments and optional conversation layers are designed to feel social, not crowded.",
+    icon: "spark",
   },
 ];
 
@@ -48,6 +55,14 @@ function FeatureIcon({ icon }: { icon: string }) {
     );
   }
 
+  if (icon === "spark") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-5 w-5">
+        <path d="M12 2.75v5.5M12 15.75v5.5M3.75 12h5.5M14.75 12h5.5M6.75 6.75l3.9 3.9M13.35 13.35l3.9 3.9M17.25 6.75l-3.9 3.9M10.65 13.35l-3.9 3.9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-5 w-5">
       <path d="M5 12h13M13 7l5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
@@ -58,15 +73,15 @@ function FeatureIcon({ icon }: { icon: string }) {
 
 function Page() {
   return (
-    <main className="min-h-screen overflow-hidden bg-[#070914] font-sans text-white">
+    <main className="royal-shell min-h-screen overflow-hidden font-sans text-white">
       <div className="relative isolate">
-        <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-[-18rem] -z-10 h-[38rem] w-[58rem] -translate-x-1/2 rounded-full bg-fuchsia-600/20 blur-[120px]" />
-        <div aria-hidden="true" className="pointer-events-none absolute right-[-20rem] top-[24rem] -z-10 h-[34rem] w-[34rem] rounded-full bg-blue-600/15 blur-[120px]" />
+        <div aria-hidden="true" className="royal-ambient royal-ambient-one left-1/2 top-[-18rem] -z-10 h-[38rem] w-[58rem] -translate-x-1/2 blur-[100px]" />
+        <div aria-hidden="true" className="royal-ambient royal-ambient-two right-[-20rem] top-[24rem] -z-10 h-[34rem] w-[34rem] blur-[100px]" />
 
-        <nav className="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-6 sm:px-8 lg:px-10" aria-label="Primary navigation">
+        <nav className="royal-nav mx-auto flex w-full max-w-7xl items-center justify-between border-b px-5 py-6 sm:px-8 lg:px-10" aria-label="Primary navigation">
           <Link href="/" className="group flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 focus-visible:ring-offset-4 focus-visible:ring-offset-[#070914]">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.08] shadow-[0_0_30px_rgba(129,92,246,0.22)] transition duration-300 group-hover:border-fuchsia-300/50 group-hover:bg-fuchsia-300/10">
-              <span className="h-3 w-3 rounded-full bg-gradient-to-br from-fuchsia-300 to-blue-400 shadow-[0_0_16px_rgba(217,70,239,0.9)]" />
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-200/30 bg-amber-100/[0.06] shadow-[0_0_30px_rgba(181,133,61,0.2)] transition duration-300 group-hover:border-amber-200/60 group-hover:bg-amber-200/10">
+              <span className="h-3 w-3 rounded-full bg-gradient-to-br from-amber-200 to-amber-600 shadow-[0_0_16px_rgba(215,181,109,0.9)]" />
             </span>
             <span className={`${headingFont.className} text-xl tracking-tight sm:text-2xl`}>Talk-Now</span>
           </Link>
@@ -77,15 +92,15 @@ function Page() {
             <Link href="#safety" className="transition hover:text-white focus:outline-none focus-visible:text-white">Safety &amp; privacy</Link>
           </div>
 
-          <Link href="/meet" className="rounded-full border border-white/15 bg-white/[0.08] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-black/10 transition hover:border-fuchsia-300/50 hover:bg-white/[0.14] focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 focus-visible:ring-offset-4 focus-visible:ring-offset-[#070914]">
+          <Link href="/meet" className="royal-button rounded-full border px-4 py-2.5 text-sm font-semibold transition hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 focus-visible:ring-offset-4 focus-visible:ring-offset-[#0b0a0a]">
             Start chatting
           </Link>
         </nav>
 
         <section className="mx-auto grid w-full max-w-7xl items-center gap-16 px-5 pb-24 pt-12 sm:px-8 md:pb-32 md:pt-20 lg:grid-cols-[1.05fr_0.95fr] lg:px-10 lg:pt-28" aria-labelledby="hero-heading">
           <div className="max-w-2xl">
-            <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-fuchsia-300/20 bg-fuchsia-300/[0.08] px-3.5 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-fuchsia-100 shadow-[0_0_35px_rgba(217,70,239,0.1)]">
-              <span className="h-1.5 w-1.5 rounded-full bg-fuchsia-300 shadow-[0_0_10px_rgba(232,121,249,0.9)]" />
+            <div className="royal-kicker mb-7 inline-flex items-center gap-2 rounded-full border border-amber-200/20 bg-amber-200/[0.08] px-3.5 py-2 text-xs font-semibold uppercase tracking-[0.18em] shadow-[0_0_35px_rgba(181,133,61,0.1)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-200 shadow-[0_0_10px_rgba(232,196,127,0.9)]" />
               Meet someone new
             </div>
             <h1 id="hero-heading" className={`${headingFont.className} max-w-3xl text-5xl leading-[0.98] tracking-[-0.04em] text-white sm:text-7xl lg:text-[5.5rem]`}>
@@ -95,7 +110,7 @@ function Page() {
               Talk-Now brings spontaneous video conversations and real text chat together in one simple place. Start a conversation, see where it goes, and keep moving when it is time for something new.
             </p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Link href="/meet" className="group inline-flex items-center justify-center gap-3 rounded-full bg-gradient-to-r from-fuchsia-500 to-blue-500 px-6 py-3.5 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(129,92,246,0.3)] transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_16px_48px_rgba(129,92,246,0.42)] focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-200 focus-visible:ring-offset-4 focus-visible:ring-offset-[#070914]">
+              <Link href="/meet" className="royal-button group inline-flex items-center justify-center gap-3 rounded-full px-6 py-3.5 text-sm font-semibold shadow-[0_12px_40px_rgba(111,69,28,0.3)] transition duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 focus-visible:ring-offset-4 focus-visible:ring-offset-[#0b0a0a]">
                 Start chatting
                 <span aria-hidden="true" className="transition-transform duration-300 group-hover:translate-x-1">→</span>
               </Link>
@@ -107,7 +122,7 @@ function Page() {
 
           <div className="relative mx-auto w-full max-w-xl" aria-label="Illustration of a Talk-Now video chat" role="img">
             <div aria-hidden="true" className="absolute -inset-6 rounded-[2.5rem] bg-gradient-to-br from-fuchsia-500/20 via-blue-500/10 to-transparent blur-2xl" />
-            <div className="relative rounded-[2rem] border border-white/15 bg-white/[0.07] p-3 shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-4">
+            <div className="royal-card royal-shimmer relative rounded-[2rem] border p-3 backdrop-blur-xl sm:p-4">
               <div className="flex items-center justify-between border-b border-white/10 px-2 pb-3 sm:px-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-300" />
@@ -154,7 +169,7 @@ function Page() {
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             {features.map((feature) => (
-              <article key={feature.number} className="group rounded-3xl border border-white/10 bg-white/[0.045] p-6 transition duration-300 hover:-translate-y-1 hover:border-fuchsia-300/30 hover:bg-white/[0.07]">
+              <article key={feature.number} className="royal-card group rounded-3xl border p-6 transition duration-300 hover:-translate-y-1">
                 <div className="flex items-center justify-between">
                   <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-400/20 to-blue-400/20 text-fuchsia-200 ring-1 ring-white/10"><FeatureIcon icon={feature.icon} /></div>
                   <span className="text-xs font-semibold tracking-[0.2em] text-slate-500">{feature.number}</span>

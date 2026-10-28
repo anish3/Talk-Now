@@ -7,6 +7,11 @@ import cors from "cors"
 const app = express();
 const allowedOrigins = [
   "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:3100",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+  "http://127.0.0.1:3100",
   "https://talk-now-nine.vercel.app",
 ];
 
@@ -35,9 +40,9 @@ const manager = new RoomManager(io)
 io.on('connection', (socket: Socket) => {
   console.log("user connected :: " , socket.id)
   manager.handleConnect(socket.id)
-  socket.on("join" , ()=>{
+  socket.on("join" , (payload?: unknown)=>{
     console.log("user joined :: " , socket.id)
-    manager.addUser(socket.id)
+    manager.addUser(socket.id, payload as any)
   })
   socket.on("disconnect", () => {
     console.log("user disconnected :: " , socket.id) 
@@ -66,6 +71,14 @@ io.on('connection', (socket: Socket) => {
   socket.on("leaveRoom" , (roomId:string)=>{
     console.log("LEAVE ROOM REQUEST FROM " , socket.id)
     manager.handleLeaveRoom(socket.id)
+  })
+
+  socket.on("quest:update" , (roomId:string , quest:any)=>{
+    manager.handleQuestUpdate(socket.id, roomId, quest)
+  })
+
+  socket.on("reveal:consent" , (roomId:string , consent:boolean)=>{
+    manager.handleRevealConsent(socket.id, roomId, consent)
   })
 });
 

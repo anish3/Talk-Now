@@ -1,15 +1,40 @@
 
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import Link from "next/link";
 import configuration from "../config/config";
+import RemoteCaptionProcessor, {
+  CaptionUpdate,
+  CaptionTargetLanguage,
+} from "../experiments/remote-transcription/RemoteCaptionProcessor";
 
 interface Message {
   from: "host" | "remote";
   message: string;
 }
+
+interface MatchPreferences {
+  mood: string;
+  interests: string[];
+}
+
+interface RoomQuest {
+  roomId: string;
+  prompt: string;
+  challenge: string;
+  id?: string;
+  reset?: boolean;
+}
+
+const VIBE_MOODS = ["chill", "fun", "deep", "creative", "balanced"];
+const VIBE_INTERESTS = ["music", "travel", "movies", "gaming", "books", "tech", "food", "art"];
+const BRIDGE_LANGUAGES: CaptionTargetLanguage[] = ["English", "Español", "हिन्दी"];
+
+type SocketStatus = "connecting" | "connected" | "reconnecting" | "disconnected" | "failed";
+type PermissionStatus = "checking" | "granted" | "denied" | "unavailable";
+type SubtitleSupport = "checking" | "available" | "unsupported" | "error";
 
 type ConnectionState =
   | "idle"
@@ -56,8 +81,39 @@ const Page = () => {
   const [reConnect, setReConnect] = useState(false);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("idle");
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
+  const [peerConnectionState, setPeerConnectionState] = useState("new");
+  const [iceConnectionState, setIceConnectionState] = useState("new");
+  const [mediaPermissionStatus, setMediaPermissionStatus] =
+    useState<PermissionStatus>("checking");
   const [hasRoom, setHasRoom] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+  const [bridgeLanguage, setBridgeLanguage] =
+    useState<CaptionTargetLanguage>("English");
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
+  const [subtitleSupport, setSubtitleSupport] =
+    useState<SubtitleSupport>("checking");
+  const [remoteAudioStream, setRemoteAudioStream] =
+    useState<MediaStream | null>(null);
+  const [captionUpdate, setCaptionUpdate] = useState<CaptionUpdate>({
+    status: "off",
+    message: "Live subtitles are off.",
+    sourceText: "",
+    translatedText: "",
+  });
+  const [captionHistory, setCaptionHistory] = useState<CaptionUpdate[]>([]);
+  const [vibePreferences, setVibePreferences] = useState<MatchPreferences>({
+    mood: "chill",
+    interests: ["music", "movies"],
+  });
+  const [quest, setQuest] = useState<RoomQuest | null>(null);
+  const [mutualRevealEnabled, setMutualRevealEnabled] = useState(false);
+  const [revealState, setRevealState] = useState({
+    mine: false,
+    partner: false,
+    active: false,
+    enabled: false,
+  });
 
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -65,6 +121,27 @@ const Page = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+
+  useEffect(() => {
+    setSubtitleSupport("available");
+  }, []);
+
+  const handleCaptionUpdate = useCallback((update: CaptionUpdate) => {
+    setCaptionUpdate(update);
+    setSubtitleSupport(update.status === "error" ? "error" : "available");
+    if (update.status === "off") {
+      setCaptionHistory([]);
+    }
+    if (update.sourceText && update.translatedText) {
+      setCaptionHistory((previous) => {
+        const last = previous[previous.length - 1];
+        if (last?.sourceText === update.sourceText && last.translatedText === update.translatedText) {
+          return previous;
+        }
+        return [...previous, update].slice(-6);
+      });
+    }
+  }, []);
 
   const handleSend = (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
@@ -96,16 +173,52 @@ const Page = () => {
     setHasRoom(false);
     setMessages([]);
     setMessageText("");
+    setQuest(null);
+    setMutualRevealEnabled(false);
+    setRevealState({ mine: false, partner: false, active: false, enabled: false });
+    setSubtitlesEnabled(false);
     socketRef.current.emit("leaveRoom");
   };
 
   const handleRetry = () => {
     setConnectionState("idle");
+    setSocketStatus("connecting");
+    setPeerConnectionState("new");
+    setIceConnectionState("new");
+    setMediaPermissionStatus("checking");
     setConnectionError("");
     setHasRoom(false);
     setMessages([]);
     setMessageText("");
+    setQuest(null);
+    setMutualRevealEnabled(false);
+    setRevealState({ mine: false, partner: false, active: false, enabled: false });
+    setSubtitlesEnabled(false);
     setReConnect((prev) => !prev);
+  };
+
+  const handleQuestNext = () => {
+    if (!socketRef.current || !roomIdRef.current) {
+      return;
+    }
+
+    const nextPrompt = {
+      id: `quest-${Date.now()}`,
+      prompt: 'What is one small thing that made your week better?',
+      challenge: 'Share one detail and ask your match a follow-up question.',
+    };
+
+    socketRef.current.emit("quest:update", roomIdRef.current, nextPrompt);
+    setQuest({ roomId: roomIdRef.current, ...nextPrompt });
+  };
+
+  const handleRevealConsent = (consent: boolean) => {
+    if (!socketRef.current || !roomIdRef.current) {
+      return;
+    }
+
+    setMutualRevealEnabled(true);
+    socketRef.current.emit("reveal:consent", roomIdRef.current, consent);
   };
 
   useEffect(() => {
@@ -142,6 +255,7 @@ const Page = () => {
     let makingOffer = false;
 
     const detachRemoteMedia = () => {
+      setRemoteAudioStream(null);
       if (remoteVideoRef.current?.srcObject === remoteStream) {
         remoteVideoRef.current.srcObject = null;
       }
@@ -185,7 +299,7 @@ const Page = () => {
 
       joinSent = true;
       setConnectionState("searching");
-      socket.emit("join");
+      socket.emit("join", { preferences: vibePreferences });
     };
 
     const flushPendingIceCandidates = async () => {
@@ -233,6 +347,10 @@ const Page = () => {
   if (!ownsActiveAttempt()) return;
 
   const track = event.track;
+
+    if (track.kind === "audio") {
+      setRemoteAudioStream(new MediaStream([track]));
+    }
 
   console.log("REMOTE TRACK RECEIVED", {
     kind: track.kind,
@@ -346,8 +464,49 @@ const Page = () => {
       roomIdRef.current = room;
       setHasRoom(true);
       setConnectionState("connecting");
+      setQuest(null);
+      setMutualRevealEnabled(false);
+      setRevealState({ mine: false, partner: false, active: false, enabled: false });
+      setSubtitlesEnabled(false);
       console.log("JOINED ROOM:", room);
       console.log("SOCKET ID:", socket.id);
+    };
+
+    const handleQuestUpdate = (nextQuest: RoomQuest) => {
+      if (!nextQuest || !nextQuest.roomId) return;
+      setQuest(nextQuest.reset ? null : nextQuest);
+    };
+
+    const handleRevealState = (state: {
+      roomId?: string;
+      consent?: Record<string, boolean>;
+      active?: boolean;
+      enabled?: boolean;
+      reset?: boolean;
+    }) => {
+      if (!roomIdRef.current || (state.roomId && state.roomId !== roomIdRef.current)) {
+        return;
+      }
+
+      if (state.reset) {
+        setMutualRevealEnabled(false);
+        setRevealState({ mine: false, partner: false, active: false, enabled: false });
+        return;
+      }
+
+      const consent = state.consent ?? {};
+      const socketId = socket.id ?? "local";
+      const partnerId = Object.keys(consent).find((id) => id !== socketId) ?? "partner";
+
+      setRevealState({
+        mine: Boolean(consent[socketId]),
+        partner: Boolean(consent[partnerId]),
+        active: Boolean(state.active),
+        enabled: Boolean(state.enabled),
+      });
+      if (state.enabled && (Boolean(state.active) || Object.values(consent).some(Boolean))) {
+        setMutualRevealEnabled(true);
+      }
     };
 
     const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
@@ -427,6 +586,10 @@ const Page = () => {
       setHasRoom(false);
       setMessages([]);
       setMessageText("");
+      setQuest(null);
+      setMutualRevealEnabled(false);
+      setRevealState({ mine: false, partner: false, active: false, enabled: false });
+      setSubtitlesEnabled(false);
 
       invalidateAttempt();
 
@@ -452,6 +615,8 @@ const Page = () => {
 
     const handleConnectionState = () => {
       const state = peerConnection.connectionState;
+      setPeerConnectionState(state);
+      setIceConnectionState(peerConnection.iceConnectionState);
 
       console.log("PEER CONNECTION STATE:", state);
       console.log("ICE CONNECTION STATE:", peerConnection.iceConnectionState);
@@ -471,13 +636,18 @@ const Page = () => {
       }
     };
 
-    const handleSocketDisconnect = () => {
+    const handleSocketDisconnect = (reason: string) => {
       if (!isCurrentEffect()) return;
 
+      setSocketStatus(reason === "io client disconnect" ? "disconnected" : "reconnecting");
       roomIdRef.current = "";
       setHasRoom(false);
       setMessages([]);
       setMessageText("");
+      setQuest(null);
+      setMutualRevealEnabled(false);
+      setRevealState({ mine: false, partner: false, active: false, enabled: false });
+      setSubtitlesEnabled(false);
       invalidateAttempt();
       setConnectionState("disconnected");
     };
@@ -485,6 +655,7 @@ const Page = () => {
     const handleSocketError = (error: Error) => {
       console.error("Socket connection error:", error);
       if (isCurrentEffect()) {
+        setSocketStatus("failed");
         invalidateAttempt();
         setConnectionError(
           `The chat server could not be reached${error.message ? `: ${error.message}` : "."}`
@@ -496,12 +667,19 @@ const Page = () => {
     const handleSocketConnect = () => {
       if (!isCurrentEffect()) return;
 
+      setSocketStatus("connected");
       if (!attemptActive) {
         setReConnect((prev) => !prev);
         return;
       }
 
       tryStartSearching();
+    };
+
+    const handleSocketReconnectAttempt = () => {
+      if (isCurrentEffect()) {
+        setSocketStatus("reconnecting");
+      }
     };
 
     peerConnection.addEventListener("track", handleTrack);
@@ -518,8 +696,11 @@ const Page = () => {
     socket.on("leaveRoom", handleLeaveRoom);
     socket.on("message", handleMessage);
     socket.on("user-count", handleUserCount);
+    socket.on("quest", handleQuestUpdate);
+    socket.on("reveal-state", handleRevealState);
     socket.on("disconnect", handleSocketDisconnect);
     socket.on("connect_error", handleSocketError);
+    socket.io.on("reconnect_attempt", handleSocketReconnectAttempt);
 
     const start = async () => {
       try {
@@ -538,6 +719,7 @@ const Page = () => {
         }
 
         localStream = stream;
+        setMediaPermissionStatus("granted");
         mediaReady = true;
 
         if (localVideoRef.current) {
@@ -553,6 +735,11 @@ const Page = () => {
       } catch (error) {
         console.error("Error accessing camera or microphone:", error);
         if (!disposed && attemptActive) {
+          setMediaPermissionStatus(
+            error instanceof DOMException && error.name === "NotAllowedError"
+              ? "denied"
+              : "unavailable"
+          );
           invalidateAttempt();
           setConnectionError(
             "Camera and microphone could not be initialized. Check browser permissions and device availability, then try again."
@@ -571,6 +758,7 @@ const Page = () => {
       roomIdRef.current = "";
 
       socket.removeAllListeners();
+      socket.io.off("reconnect_attempt", handleSocketReconnectAttempt);
       socket.disconnect();
 
       peerConnection.removeEventListener("track", handleTrack);
@@ -579,6 +767,7 @@ const Page = () => {
       peerConnection.removeEventListener("iceconnectionstatechange", handleConnectionState);
 
       closePeerConnection();
+      setRemoteAudioStream(null);
 
       if (localStream) {
         localStream.getTracks().forEach((track) => track.stop());
@@ -617,14 +806,48 @@ const Page = () => {
   const isSearching = connectionState === "searching";
   const isConnecting = connectionState === "connecting";
   const canSendMessage = connectionState === "connected" && hasRoom;
+  const socketStatusLabel: Record<SocketStatus, string> = {
+    connecting: "Connecting",
+    connected: "Connected",
+    reconnecting: "Reconnecting",
+    disconnected: "Disconnected",
+    failed: "Connection failed",
+  };
+  const permissionStatusLabel: Record<PermissionStatus, string> = {
+    checking: "Checking permissions",
+    granted: "Camera & mic ready",
+    denied: "Permission denied",
+    unavailable: "Media unavailable",
+  };
+  const connectionPhaseLabel: Record<string, string> = {
+    new: "Not started",
+    checking: "Checking",
+    connected: "Connected",
+    completed: "Connected",
+    disconnected: "Disconnected",
+    failed: "Failed",
+    closed: "Closed",
+  };
+  const subtitleSupportLabel: Record<SubtitleSupport, string> = {
+    checking: "Checking browser support",
+    available: "Local captions ready for English, Spanish, or Hindi",
+    unsupported: "Local caption processing unavailable",
+    error: "Caption processing error",
+  };
 
   return (
-    <main className="flex min-h-screen flex-col overflow-x-hidden bg-[#070914] text-white">
+    <main className="royal-shell flex min-h-screen flex-col overflow-x-hidden text-white">
+      <RemoteCaptionProcessor
+        stream={remoteAudioStream}
+        enabled={subtitlesEnabled}
+        targetLanguage={bridgeLanguage}
+        onUpdate={handleCaptionUpdate}
+      />
       <div className="relative isolate">
         <div aria-hidden="true" className="pointer-events-none absolute left-[-14rem] top-[-20rem] -z-10 h-[38rem] w-[38rem] rounded-full bg-fuchsia-600/15 blur-[130px]" />
         <div aria-hidden="true" className="pointer-events-none absolute right-[-12rem] top-[24rem] -z-10 h-[34rem] w-[34rem] rounded-full bg-blue-600/15 blur-[130px]" />
 
-        <header className="border-b border-white/10 bg-[#080a17]/80 backdrop-blur-xl">
+        <header className="royal-nav border-b bg-[#0f0c0c]/85 backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-[1500px] items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
             <Link href="/" aria-label="Back to Talk-Now home" className="group flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 focus-visible:ring-offset-4 focus-visible:ring-offset-[#080a17]">
               <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.08] shadow-[0_0_30px_rgba(129,92,246,0.2)] transition group-hover:border-fuchsia-300/50 group-hover:bg-fuchsia-300/10">
@@ -633,7 +856,7 @@ const Page = () => {
               <span className="text-lg font-semibold tracking-tight text-white sm:text-xl">Talk-Now</span>
             </Link>
             <div className="flex items-center gap-3 sm:gap-5">
-              <div className="hidden items-center gap-2 text-xs font-medium text-slate-400 sm:flex">
+              <div className="hidden items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/5 px-2.5 py-1.5 text-[11px] font-medium text-slate-300 sm:flex">
                 <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_10px_rgba(110,231,183,0.8)]" />
                 {userCount} online
               </div>
@@ -648,15 +871,137 @@ const Page = () => {
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-fuchsia-300">Talk-Now room</p>
               <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white sm:text-3xl">Your next conversation starts here.</h1>
             </div>
-            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-2 text-xs font-medium text-slate-300 shadow-lg shadow-black/10" aria-live="polite">
+            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-fuchsia-300/20 bg-gradient-to-r from-fuchsia-500/10 via-white/[0.04] to-blue-500/10 px-3 py-2 text-xs font-medium text-slate-200 shadow-lg shadow-black/10" aria-live="polite">
               <span className={`h-2 w-2 rounded-full ${connectionState === "connected" ? "bg-emerald-300 shadow-[0_0_12px_rgba(110,231,183,0.85)]" : "bg-fuchsia-300 shadow-[0_0_12px_rgba(232,121,249,0.75)]"}`} />
               {stateContent.label}
             </div>
           </header>
 
+          <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Connection status" aria-live="polite">
+            {[
+              ["Socket", socketStatusLabel[socketStatus]],
+              ["Match", stateContent.label],
+              ["WebRTC", connectionPhaseLabel[peerConnectionState] ?? peerConnectionState],
+              ["ICE", connectionPhaseLabel[iceConnectionState] ?? iceConnectionState],
+              ["Media", permissionStatusLabel[mediaPermissionStatus]],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] px-3 py-2.5">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+                <p className="mt-1 truncate text-[11px] font-medium text-slate-200">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="royal-card mb-5 rounded-[1.5rem] border p-4 backdrop-blur-xl">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-fuchsia-300">VibeMatch</p>
+                <p className="mt-2 text-sm text-slate-300">Optional match preferences help find people with similar energy.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {VIBE_MOODS.map((mood) => (
+                  <button
+                    key={mood}
+                    type="button"
+                    onClick={() => setVibePreferences((prev) => ({ ...prev, mood }))}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition ${vibePreferences.mood === mood ? "bg-gradient-to-r from-fuchsia-500 to-blue-500 text-white shadow-lg shadow-fuchsia-950/30" : "border border-white/10 bg-white/[0.05] text-slate-300 hover:border-white/20 hover:text-white"}`}
+                  >
+                    {mood}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {VIBE_INTERESTS.map((interest) => {
+                const active = vibePreferences.interests.includes(interest);
+                return (
+                  <button
+                    key={interest}
+                    type="button"
+                    onClick={() =>
+                      setVibePreferences((prev) => ({
+                        ...prev,
+                        interests: active
+                          ? prev.interests.filter((item) => item !== interest)
+                          : [...prev.interests, interest].slice(0, 4),
+                      }))
+                    }
+                    className={`rounded-full border px-2.5 py-1.5 text-[11px] font-medium capitalize transition ${active ? "border-fuchsia-300/40 bg-fuchsia-500/10 text-fuchsia-100" : "border-white/10 bg-transparent text-slate-400 hover:border-white/20 hover:text-white"}`}
+                  >
+                    {interest}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex flex-col gap-2 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">Language Bridge</p>
+                <p className="mt-1 text-xs text-slate-400">Choose your preferred conversation language.</p>
+              </div>
+              <label className="sr-only" htmlFor="bridge-language">Preferred language</label>
+              <select
+                id="bridge-language"
+                value={bridgeLanguage}
+                onChange={(event) => {
+                  const language = event.target.value;
+                  if (BRIDGE_LANGUAGES.includes(language as CaptionTargetLanguage)) {
+                    setBridgeLanguage(language as CaptionTargetLanguage);
+                  }
+                }}
+                className="rounded-xl border border-white/10 bg-[#151111] px-3 py-2 text-xs font-medium text-slate-200 outline-none transition focus:border-amber-200/50 focus:ring-2 focus:ring-amber-200/10"
+              >
+                {BRIDGE_LANGUAGES.map((language) => (
+                  <option key={language} value={language}>{language}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-3 flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">Live Subtitles</p>
+                <p className="mt-1 text-xs text-slate-400">{subtitleSupportLabel[subtitleSupport]}</p>
+              </div>
+              <button
+                type="button"
+                aria-pressed={subtitlesEnabled}
+                onClick={() => setSubtitlesEnabled((enabled) => !enabled)}
+                className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${subtitlesEnabled ? "border-amber-200/50 bg-amber-200/10 text-amber-100" : "border-white/10 bg-white/[0.04] text-slate-300 hover:border-amber-200/30 hover:text-white"}`}
+              >
+                <span aria-hidden="true" className="rounded border border-current px-1 text-[9px]">CC</span>
+                {subtitlesEnabled ? "Subtitles on" : "Live Subtitles"}
+              </button>
+            </div>
+            {subtitlesEnabled && (
+              <div className="mt-3 rounded-2xl border border-amber-200/15 bg-black/20 px-3 py-3 text-xs leading-5 text-slate-300">
+                <p className="font-medium text-amber-100">{captionUpdate.message}</p>
+                <p className="mt-1 text-slate-400">
+                  Captions use only the incoming remote audio track and run locally in your browser. The first use downloads and caches the speech and translation models.
+                </p>
+                <p className="mt-2 text-[11px] text-slate-500">Supported source: English · Translation pairs: English → Español or हिन्दी.</p>
+                {process.env.NODE_ENV === "development" && captionUpdate.diagnostics && (
+                  <details className="mt-2 text-[11px] text-slate-500">
+                    <summary className="cursor-pointer">Caption diagnostics</summary>
+                    <p className="mt-1">
+                      Segment {captionUpdate.diagnostics.sequence} · buffer {Math.round(captionUpdate.diagnostics.audioBufferingDelayMs)} ms ·
+                      capture {Math.round(captionUpdate.diagnostics.captureDelayMs)} ms ·
+                      transcription {Math.round(captionUpdate.diagnostics.transcriptionMs)} ms ·
+                      translation {Math.round(captionUpdate.diagnostics.translationMs)} ms ·
+                      total {Math.round(captionUpdate.diagnostics.totalLatencyMs)} ms
+                      {captionUpdate.diagnostics.modelLoadingMs !== undefined && (
+                        <> · model load {Math.round(captionUpdate.diagnostics.modelLoadingMs)} ms</>
+                      )}
+                      {captionUpdate.diagnostics.modelDownloadedBytes !== undefined && (
+                        <> · model bytes {Math.round(captionUpdate.diagnostics.modelDownloadedBytes / 1024)} KiB</>
+                      )}
+                    </p>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="grid min-h-0 gap-5 lg:h-[30rem] lg:grid-cols-[1.2fr_0.8fr] lg:items-stretch">
             <section className="grid min-h-0 min-w-0 gap-5 sm:grid-cols-2" aria-label="Video conversation">
-              <div className="relative aspect-video min-h-0 min-w-0 overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#11162a] shadow-2xl shadow-black/25 sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
+              <div className="royal-video relative aspect-video min-h-0 min-w-0 overflow-hidden rounded-[1.75rem] border bg-[#151111] sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
                 <video
                   id="remoteVideo"
                   ref={remoteVideoRef}
@@ -668,6 +1013,34 @@ const Page = () => {
                   <span className="rounded-full border border-white/15 bg-black/20 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur-md">Stranger</span>
                   <span className="rounded-full border border-white/15 bg-black/20 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300 backdrop-blur-md">Remote video</span>
                 </div>
+                {subtitlesEnabled && (
+                  <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded-2xl border border-white/10 bg-black/70 px-4 py-3 text-center text-sm leading-6 text-white/90 shadow-xl backdrop-blur-md sm:inset-x-8">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">Live Subtitles</span>
+                    {captionHistory.length > 0 ? (
+                      <div className="mt-1 space-y-1">
+                        {captionHistory.map((caption, index) => (
+                          <div key={`${caption.sourceText}-${index}`}>
+                            <p>{caption.translatedText}</p>
+                            {caption.sourceText !== caption.translatedText && (
+                              <p className="text-xs text-slate-400">{caption.sourceText}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1">{captionUpdate.message}</p>
+                    )}
+                  </div>
+                )}
+
+                {mutualRevealEnabled && connectionState === "connected" && !revealState.active && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#070914]/80 px-6 text-center backdrop-blur-md">
+                    <div className="max-w-xs rounded-2xl border border-white/10 bg-white/[0.06] p-5 shadow-xl shadow-black/30">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-fuchsia-300">Private view</p>
+                      <p className="mt-3 text-sm leading-6 text-slate-200">Reveal remains locked until both people consent.</p>
+                    </div>
+                  </div>
+                )}
 
                 {connectionState !== "connected" && (
                   <div className="absolute inset-0 flex items-center justify-center bg-[#080a17]/75 px-6 text-center backdrop-blur-md">
@@ -693,7 +1066,7 @@ const Page = () => {
                 )}
               </div>
 
-              <div className="relative aspect-video min-h-0 min-w-0 overflow-hidden rounded-[1.75rem] border border-white/10 bg-[#11162a] shadow-2xl shadow-black/25 sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
+              <div className="royal-video relative aspect-video min-h-0 min-w-0 overflow-hidden rounded-[1.75rem] border bg-[#151111] sm:aspect-auto sm:min-h-[26rem] lg:min-h-[30rem]">
                 <video
                   id="localVideo"
                   ref={localVideoRef}
@@ -709,13 +1082,57 @@ const Page = () => {
               </div>
             </section>
 
-            <section className="flex min-h-[25rem] max-h-[34rem] min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/[0.055] shadow-2xl shadow-black/25 backdrop-blur-xl lg:h-full lg:min-h-0" aria-label="Text chat">
+            <section className="royal-card flex min-h-[25rem] max-h-[34rem] min-w-0 flex-col overflow-hidden rounded-[1.75rem] border backdrop-blur-xl lg:h-full lg:min-h-0" aria-label="Text chat">
               <div className="flex items-center justify-between border-b border-white/10 px-5 py-4 sm:px-6">
                 <div>
                   <p className="text-sm font-semibold text-white">Conversation</p>
                   <p className="mt-1 text-xs text-slate-400">Your messages stay in this room.</p>
                 </div>
                 <span className="rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Text chat</span>
+              </div>
+
+              <div className="border-b border-white/10 px-4 py-3 sm:px-6">
+                {quest && (
+                  <div className="rounded-2xl border border-fuchsia-300/20 bg-gradient-to-r from-fuchsia-500/10 via-white/[0.04] to-blue-500/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-fuchsia-200">Conversation Quest</p>
+                      <button type="button" onClick={handleQuestNext} className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium text-slate-200 transition hover:border-fuchsia-300/40 hover:text-white">New prompt</button>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-white">{quest.prompt}</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">{quest.challenge}</p>
+                  </div>
+                )}
+
+                {connectionState === "connected" && (
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-[#0b1020] p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-300">Mutual Reveal</p>
+                        <p className="mt-1 text-xs text-slate-300">
+                          {revealState.active
+                            ? "Both users consented."
+                            : revealState.mine
+                                ? "You agreed ✓ Waiting for the other person…"
+                                : revealState.partner
+                                  ? "They agreed ✓ Waiting for your consent."
+                                  : "Neither user has consented."}
+                        </p>
+                      </div>
+                      {!mutualRevealEnabled ? (
+                        <button type="button" onClick={() => setMutualRevealEnabled(true)} className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-medium text-slate-200 transition hover:border-fuchsia-300/40 hover:text-white">Enable</button>
+                      ) : (
+                        <button type="button" onClick={() => handleRevealConsent(true)} disabled={revealState.mine} className="rounded-full bg-gradient-to-r from-emerald-500 to-cyan-500 px-2.5 py-1.5 text-[10px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">{revealState.mine ? "You agreed ✓" : "I agree"}</button>
+                      )}
+                    </div>
+
+                    {mutualRevealEnabled && (
+                      <div className="mt-3 flex gap-2">
+                        <button type="button" onClick={() => handleRevealConsent(true)} disabled={revealState.mine} className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-semibold text-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">{revealState.mine ? "You agreed ✓" : "I agree"}</button>
+                        <button type="button" onClick={() => handleRevealConsent(false)} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] font-semibold text-slate-300">Keep private</button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div ref={chatScrollRef} onScroll={handleChatScroll} className="hide-scrollbar min-h-0 min-w-0 flex-grow overflow-y-auto overscroll-contain px-4 py-5 sm:px-6">
