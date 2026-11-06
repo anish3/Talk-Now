@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import { Analytics } from '@vercel/analytics/next';
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -35,6 +36,7 @@ export default function RootLayout({
       
       <body className={`bg-[#0b0a0a] text-white antialiased ${inter.className}`}>
         {children}
+        <Analytics />
 
         <script
           type="application/ld+json"
